@@ -1,0 +1,17 @@
+# Python dependencies for 2s-AGCN.
+#
+# The original code targeted PyTorch 0.3 (Python 2/3.5-3.6). That release cannot
+# be installed on modern Python/OS, so these pins use current, actively
+# maintained releases that the code has been made compatible with.
+#
+# PyTorch is pinned to the CPU build here so the project installs on machines
+# without a GPU. On a CUDA host, install the matching CUDA build of torch
+# instead (see https://pytorch.org/get-started/locally/).
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch==2.14.0
+numpy==2.5.3
+PyYAML==6.0.3
+tqdm==4.70.1
+tensorboardX==2.6.5
+matplotlib==3.11.2
