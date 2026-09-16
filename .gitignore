@@ -4,6 +4,14 @@
 runs/
 work_dir/
 
+# Virtual environment
+.venv/
+
+# Generated / preprocessed datasets
+/data/ntu/
+/data/kinetics/
+/data/nturgbd_raw/nturgb+d_skeletons/
+
 ### Python template
 # Byte-compiled / optimized / DLL files
 __pycache__/
