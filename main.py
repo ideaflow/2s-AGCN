@@ -213,14 +213,17 @@ class Processor():
             worker_init_fn=init_seed)
 
     def load_model(self):
-        output_device = self.arg.device[0] if type(self.arg.device) is list else self.arg.device
+        requested_device = self.arg.device[0] if type(self.arg.device) is list else self.arg.device
+        # Fall back to CPU when no CUDA device is available so the code runs on
+        # GPU-less machines while keeping the original behaviour on a GPU host.
+        output_device = requested_device if torch.cuda.is_available() else 'cpu'
         self.output_device = output_device
         Model = import_class(self.arg.model)
         shutil.copy2(inspect.getfile(Model), self.arg.work_dir)
         print(Model)
-        self.model = Model(**self.arg.model_args).cuda(output_device)
+        self.model = Model(**self.arg.model_args).to(output_device)
         print(self.model)
-        self.loss = nn.CrossEntropyLoss().cuda(output_device)
+        self.loss = nn.CrossEntropyLoss().to(output_device)
 
         if self.arg.weights:
             self.global_step = int(arg.weights[:-3].split('-')[-1])
@@ -233,7 +236,7 @@ class Processor():
 
             weights = OrderedDict(
                 [[k.split('module.')[-1],
-                  v.cuda(output_device)] for k, v in weights.items()])
+                  v.to(output_device)] for k, v in weights.items()])
 
             for w in self.arg.ignore_weights:
                 if weights.pop(w, None) is not None:
@@ -252,7 +255,7 @@ class Processor():
                 state.update(weights)
                 self.model.load_state_dict(state)
 
-        if type(self.arg.device) is list:
+        if type(self.arg.device) is list and torch.cuda.is_available():
             if len(self.arg.device) > 1:
                 self.model = nn.DataParallel(
                     self.model,
@@ -276,7 +279,7 @@ class Processor():
             raise ValueError()
 
         self.lr_scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1,
-                                              patience=10, verbose=True,
+                                              patience=10,
                                               threshold=1e-4, threshold_mode='rel',
                                               cooldown=0)
 
@@ -351,8 +354,8 @@ class Processor():
         for batch_idx, (data, label, index) in enumerate(process):
             self.global_step += 1
             # get data
-            data = Variable(data.float().cuda(self.output_device), requires_grad=False)
-            label = Variable(label.long().cuda(self.output_device), requires_grad=False)
+            data = Variable(data.float().to(self.output_device), requires_grad=False)
+            label = Variable(label.long().to(self.output_device), requires_grad=False)
             timer['dataloader'] += self.split_time()
 
             # forward
@@ -370,13 +373,13 @@ class Processor():
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
-            loss_value.append(loss.data[0])
+            loss_value.append(loss.item())
             timer['model'] += self.split_time()
 
             value, predict_label = torch.max(output.data, 1)
             acc = torch.mean((predict_label == label.data).float())
             self.train_writer.add_scalar('acc', acc, self.global_step)
-            self.train_writer.add_scalar('loss', loss.data[0], self.global_step)
+            self.train_writer.add_scalar('loss', loss.item(), self.global_step)
             self.train_writer.add_scalar('loss_l1', l1, self.global_step)
             # self.train_writer.add_scalar('batch_time', process.iterable.last_duration, self.global_step)
 
@@ -423,15 +426,10 @@ class Processor():
             step = 0
             process = tqdm(self.data_loader[ln])
             for batch_idx, (data, label, index) in enumerate(process):
-                data = Variable(
-                    data.float().cuda(self.output_device),
-                    requires_grad=False,
-                    volatile=True)
-                label = Variable(
-                    label.long().cuda(self.output_device),
-                    requires_grad=False,
-                    volatile=True)
-                output = self.model(data)
+                with torch.no_grad():
+                    data = data.float().to(self.output_device)
+                    label = label.long().to(self.output_device)
+                    output = self.model(data)
                 if isinstance(output, tuple):
                     output, l1 = output
                     l1 = l1.mean()
@@ -439,7 +437,7 @@ class Processor():
                     l1 = 0
                 loss = self.loss(output, label)
                 score_frag.append(output.data.cpu().numpy())
-                loss_value.append(loss.data[0])
+                loss_value.append(loss.item())
 
                 _, predict_label = torch.max(output.data, 1)
                 step += 1
@@ -535,7 +533,7 @@ if __name__ == '__main__':
     p = parser.parse_args()
     if p.config is not None:
         with open(p.config, 'r') as f:
-            default_arg = yaml.load(f)
+            default_arg = yaml.load(f, Loader=yaml.FullLoader)
         key = vars(p).keys()
         for k in default_arg.keys():
             if k not in key:
